@@ -3,7 +3,25 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { rest } from 'msw';
 import { setupServer } from 'msw/node';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import App from '../App';
+
+// Create theme for testing
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: '#1976d2',
+    },
+    secondary: {
+      main: '#dc004e',
+    },
+  },
+});
+
+// Helper function to render with theme
+function renderWithTheme(component) {
+  return render(<ThemeProvider theme={theme}>{component}</ThemeProvider>);
+}
 
 // Mock server to intercept API requests
 const server = setupServer(
@@ -67,16 +85,16 @@ afterAll(() => server.close());
 
 describe('App Component', () => {
   test('renders the header', async () => {
-    render(<App />);
+    renderWithTheme(<App />);
     expect(screen.getByText('Hello World')).toBeInTheDocument();
     expect(screen.getByText('Connected to in-memory database')).toBeInTheDocument();
   });
 
   test('loads and displays items', async () => {
-    render(<App />);
+    renderWithTheme(<App />);
 
-    // Initially shows loading state
-    expect(screen.getByText('Loading data...')).toBeInTheDocument();
+    // Initially shows loading state (MUI CircularProgress)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
 
     // Wait for items to load
     await waitFor(() => {
@@ -89,15 +107,15 @@ describe('App Component', () => {
   test('adds a new item', async () => {
     const user = userEvent.setup();
 
-    render(<App />);
+    renderWithTheme(<App />);
 
     // Wait for items to load
     await waitFor(() => {
-      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     // Fill in the form and submit
-    const input = screen.getByPlaceholderText('Enter item name');
+    const input = screen.getByLabelText('Item Name');
     await user.type(input, 'New Test Item');
 
     const submitButton = screen.getByText('Add Item');
@@ -117,12 +135,13 @@ describe('App Component', () => {
       }),
     );
 
-    render(<App />);
+    renderWithTheme(<App />);
 
-    // Wait for error message
+    // Wait for error message (MUI Alert component)
     await waitFor(() => {
-      expect(screen.getByText(/Failed to fetch data/)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
+    expect(screen.getByText(/Failed to fetch data/)).toBeInTheDocument();
   });
 
   test('shows empty state when no items', async () => {
@@ -133,7 +152,7 @@ describe('App Component', () => {
       }),
     );
 
-    render(<App />);
+    renderWithTheme(<App />);
 
     // Wait for empty state message
     await waitFor(() => {
@@ -144,7 +163,7 @@ describe('App Component', () => {
   test('deletes an item', async () => {
     const user = userEvent.setup();
 
-    render(<App />);
+    renderWithTheme(<App />);
 
     // Wait for items to load
     await waitFor(() => {
@@ -153,8 +172,8 @@ describe('App Component', () => {
 
     expect(screen.getByText('Test Item 2')).toBeInTheDocument();
 
-    // Find and click the delete button for Test Item 1
-    const deleteButtons = screen.getAllByText('Delete');
+    // Find and click the delete button for Test Item 1 (MUI IconButton with DeleteIcon)
+    const deleteButtons = screen.getAllByLabelText(/Delete Test Item/);
     expect(deleteButtons).toHaveLength(2);
 
     await user.click(deleteButtons[0]);
@@ -171,7 +190,7 @@ describe('App Component', () => {
   test('handles delete error', async () => {
     const user = userEvent.setup();
 
-    render(<App />);
+    renderWithTheme(<App />);
 
     // Wait for items to load
     await waitFor(() => {
@@ -188,13 +207,14 @@ describe('App Component', () => {
     );
 
     // Click delete button
-    const deleteButtons = screen.getAllByText('Delete');
+    const deleteButtons = screen.getAllByLabelText(/Delete Test Item/);
     await user.click(deleteButtons[0]);
 
-    // Check that error message appears
+    // Check that error message appears (MUI Alert component)
     await waitFor(() => {
-      expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
+    expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
 
     // When there's an error, the UI logic hides the items list
     // This is the current behavior of the component

@@ -1,4 +1,23 @@
 import React, { useState, useEffect } from 'react';
+import {
+  Container,
+  Paper,
+  Typography,
+  TextField,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Box,
+  Stack,
+  CircularProgress,
+  Alert,
+  IconButton,
+} from '@mui/material';
+import { Delete as DeleteIcon } from '@mui/icons-material';
 import './App.css';
 
 function App() {
@@ -75,67 +94,113 @@ function App() {
   };
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Hello World</h1>
-        <p>Connected to in-memory database</p>
-      </header>
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <Paper
+        elevation={3}
+        sx={{
+          p: 3,
+          mb: 3,
+          backgroundColor: 'primary.main',
+          color: 'primary.contrastText',
+          textAlign: 'center',
+        }}
+      >
+        <Typography variant="h1" component="h1" gutterBottom>
+          Hello World
+        </Typography>
+        <Typography variant="body1">Connected to in-memory database</Typography>
+      </Paper>
 
-      <main>
-        <section className="add-item-section">
-          <h2>Add New Item</h2>
-          <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={newItem}
-              onChange={e => setNewItem(e.target.value)}
-              placeholder="Enter item name"
-            />
-            <button type="submit">Add Item</button>
-          </form>
-        </section>
+      <Stack spacing={3}>
+        <Paper elevation={2} sx={{ p: 3 }}>
+          <Typography variant="h2" component="h2" gutterBottom>
+            Add New Item
+          </Typography>
+          <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                fullWidth
+                variant="outlined"
+                value={newItem}
+                onChange={e => setNewItem(e.target.value)}
+                placeholder="Enter item name"
+                label="Item Name"
+                size="medium"
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                sx={{ minWidth: { xs: 'auto', sm: '120px' } }}
+              >
+                Add Item
+              </Button>
+            </Stack>
+          </Box>
+        </Paper>
 
-        <section className="items-section">
-          <h2>Items from Database</h2>
-          {loading && <p>Loading data...</p>}
-          {error && <p className="error">{error}</p>}
-          {!loading && !error && (
-            <div className="table-container">
-              {data.length > 0 ? (
-                <table className="items-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Name</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.map(item => (
-                      <tr key={item.id}>
-                        <td>{item.id}</td>
-                        <td className="item-name">{item.name}</td>
-                        <td>
-                          <button
-                            className="delete-button"
-                            onClick={() => handleDelete(item.id)}
-                            aria-label={`Delete ${item.name}`}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p>No items found. Add some!</p>
-              )}
-            </div>
+        <Paper elevation={2} sx={{ p: 3 }}>
+          <Typography variant="h2" component="h2" gutterBottom>
+            Items from Database
+          </Typography>
+
+          {loading && (
+            <Box display="flex" justifyContent="center" p={4}>
+              <CircularProgress />
+            </Box>
           )}
-        </section>
-      </main>
-    </div>
+
+          {error && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          {!loading && !error && (
+            <>
+              {data.length > 0 ? (
+                <TableContainer component={Paper} variant="outlined" sx={{ mt: 2 }}>
+                  <Table sx={{ minWidth: 650 }} aria-label="items table">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>ID</TableCell>
+                        <TableCell>Name</TableCell>
+                        <TableCell align="center">Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {data.map(item => (
+                        <TableRow key={item.id} hover>
+                          <TableCell component="th" scope="row">
+                            {item.id}
+                          </TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell align="center">
+                            <IconButton
+                              color="error"
+                              onClick={() => handleDelete(item.id)}
+                              aria-label={`Delete ${item.name}`}
+                              size="small"
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Box textAlign="center" py={4}>
+                  <Typography variant="body1" color="text.secondary">
+                    No items found. Add some!
+                  </Typography>
+                </Box>
+              )}
+            </>
+          )}
+        </Paper>
+      </Stack>
+    </Container>
   );
 }
 

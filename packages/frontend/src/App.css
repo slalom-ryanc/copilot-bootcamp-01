@@ -58,30 +58,49 @@ button:hover {
   background-color: #21a1c9;
 }
 
-ul {
-  list-style-type: none;
-  padding: 0;
+.table-container {
+  overflow-x: auto;
 }
 
-li {
-  padding: 10px;
-  border-bottom: 1px solid #ddd;
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.items-table th,
+.items-table td {
+  padding: 12px;
   text-align: left;
+  border-bottom: 1px solid #ddd;
 }
 
-li:last-child {
+.items-table th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+  color: #495057;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.items-table tr:hover {
+  background-color: #f8f9fa;
+}
+
+.items-table tr:last-child td {
   border-bottom: none;
 }
 
-.item-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.item-name {
+  font-size: 1rem;
 }
 
-.item-name {
-  flex: 1;
-  font-size: 1rem;
+.items-table td:first-child {
+  font-weight: 500;
+  color: #6c757d;
+}
+
+.items-table td:last-child {
+  text-align: center;
 }
 
 .delete-button {

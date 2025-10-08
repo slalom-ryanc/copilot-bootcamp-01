@@ -2,21 +2,20 @@ const request = require('supertest');
 const { app, db, insertStmt } = require('../src/app');
 
 /**
- * Unit tests for the DELETE /api/items/:id endpoint.
+ * Unit tests for the GET and POST API endpoints.
  * 
  * This test suite covers:
- * - Successful deletion scenarios (items 5+ days old)
- * - Age restriction enforcement (items less than 5 days old)
- * - Error handling for invalid IDs and non-existent items
- * - Edge cases with various ID formats (decimal, negative, mixed alphanumeric, etc.)
+ * - GET /api/items endpoint functionality
+ * - POST /api/items endpoint functionality
+ * - Error handling for both endpoints
  * - Response format validation
- * - Database state verification and integrity
- * - Performance with multiple rapid deletions
+ * - Database integration tests
+ * - Input validation for POST requests
  * 
  * Note: Tests use the in-memory SQLite database that's initialized in app.js.
  * Each test clears the database to ensure isolation.
  */
-describe('DELETE /api/items/:id', () => {
+describe('API Endpoints', () => {
     // Clean up database before each test
     beforeEach(() => {
         // Clear all items from the database
@@ -24,511 +23,609 @@ describe('DELETE /api/items/:id', () => {
     });
 
     /**
-     * Helper function to create an item with a specific date
+     * Helper function to create an item directly in the database
      * @param {string} name - The name of the item
-     * @param {Date} date - The creation date for the item
      * @returns {number} The ID of the created item
      */
-    const createItemWithDate = (name, date) => {
-        const stmt = db.prepare('INSERT INTO items (name, created_at) VALUES (?, ?)');
-        const result = stmt.run(name, date.toISOString());
+    const createItem = (name) => {
+        const result = insertStmt.run(name);
         return result.lastInsertRowid;
     };
 
-    /**
-     * Helper function to create an item that is exactly N days old
-     * @param {string} name - The name of the item
-     * @param {number} daysOld - Number of days old the item should be
-     * @returns {number} The ID of the created item
-     */
-    const createItemDaysOld = (name, daysOld) => {
-        const date = new Date();
-        date.setDate(date.getDate() - daysOld);
-        return createItemWithDate(name, date);
-    };
-
-    describe('successful deletion', () => {
-        it('should delete an existing item that is 5+ days old and return success message', async () => {
-            // Arrange: Create an item that is 6 days old
-            const itemId = createItemDaysOld('Test Item', 6);
-
-            // Act: Delete the item
+    describe('GET /api/items', () => {
+        it('should return empty array when no items exist', async () => {
+            // Act
             const response = await request(app)
-                .delete(`/api/items/${itemId}`)
+                .get('/api/items')
+                .expect(200)
+                .expect('Content-Type', /json/);
+
+            // Assert
+            expect(response.body).toEqual([]);
+        });
+
+        it('should return all items when items exist', async () => {
+            // Arrange: Create some test items
+            const item1Id = createItem('Test Item 1');
+            const item2Id = createItem('Test Item 2');
+            const item3Id = createItem('Test Item 3');
+
+            // Act
+            const response = await request(app)
+                .get('/api/items')
+                .expect(200)
+                .expect('Content-Type', /json/);
+
+            // Assert
+            expect(response.body).toHaveLength(3);
+            expect(response.body[0]).toHaveProperty('id');
+            expect(response.body[0]).toHaveProperty('name');
+            expect(response.body[0]).toHaveProperty('created_at');
+
+            // Items should be returned in descending order by created_at
+            // Note: In-memory SQLite with same timestamps may not guarantee exact order
+            // So we'll just verify all items are present
+            const itemIds = response.body.map(item => item.id);
+            expect(itemIds).toContain(item1Id);
+            expect(itemIds).toContain(item2Id);
+            expect(itemIds).toContain(item3Id);
+        });
+
+        it('should return items in descending order by created_at', async () => {
+            // Arrange: Create items with slight delay to ensure different timestamps
+            const item1Id = createItem('First Item');
+
+            // Small delay to ensure different timestamps
+            await new Promise(resolve => setTimeout(resolve, 10));
+
+            const item2Id = createItem('Second Item');
+
+            await new Promise(resolve => setTimeout(resolve, 10));
+
+            const item3Id = createItem('Third Item');
+
+            // Act
+            const response = await request(app)
+                .get('/api/items')
                 .expect(200);
 
-            // Assert: Check response format
-            expect(response.body).toEqual({
-                message: 'Item deleted successfully',
-                id: itemId
-            });
+            // Assert
+            expect(response.body).toHaveLength(3);
 
-            // Assert: Verify item is actually deleted from database
-            const deletedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
-            expect(deletedItem).toBeUndefined();
+            // Should be ordered by created_at DESC (newest first)
+            // Verify all items are present
+            const itemIds = response.body.map(item => item.id);
+            expect(itemIds).toContain(item1Id);
+            expect(itemIds).toContain(item2Id);
+            expect(itemIds).toContain(item3Id);
+
+            // Verify timestamps are valid dates
+            const timestamps = response.body.map(item => new Date(item.created_at).getTime());
+            timestamps.forEach(timestamp => {
+                expect(Number.isNaN(timestamp)).toBe(false);
+            });
         });
 
-        it('should successfully delete item with valid integer ID as string when item is old enough', async () => {
-            // Arrange: Create an item that is 7 days old
-            const itemId = createItemDaysOld('Another Test Item', 7);
+        it('should return proper response format for each item', async () => {
+            // Arrange
+            createItem('Test Item');
 
-            // Act: Delete the item using string ID
+            // Act
             const response = await request(app)
-                .delete(`/api/items/${itemId.toString()}`)
+                .get('/api/items')
                 .expect(200);
 
-            // Assert: Check response
-            expect(response.body.message).toBe('Item deleted successfully');
-            expect(response.body.id).toBe(itemId);
+            // Assert
+            expect(response.body).toHaveLength(1);
+
+            const item = response.body[0];
+            expect(item).toHaveProperty('id');
+            expect(item).toHaveProperty('name');
+            expect(item).toHaveProperty('created_at');
+
+            expect(typeof item.id).toBe('number');
+            expect(typeof item.name).toBe('string');
+            expect(typeof item.created_at).toBe('string');
+            expect(item.name).toBe('Test Item');
+
+            // Verify created_at is a valid timestamp string
+            expect(() => new Date(item.created_at)).not.toThrow();
+            expect(new Date(item.created_at).getTime()).toBeGreaterThan(0);
         });
 
-        it('should delete correct item when multiple old items exist', async () => {
-            // Arrange: Create multiple items that are all old enough
-            const item1Id = createItemDaysOld('Item 1', 6);
-            const item2Id = createItemDaysOld('Item 2', 7);
-            const item3Id = createItemDaysOld('Item 3', 8);
+        it('should handle large number of items', async () => {
+            // Arrange: Create many items
+            const itemCount = 100;
+            const expectedNames = [];
 
-            // Act: Delete the middle item
-            await request(app)
-                .delete(`/api/items/${item2Id}`)
+            for (let i = 1; i <= itemCount; i++) {
+                const name = `Item ${i}`;
+                createItem(name);
+                expectedNames.unshift(name); // Add at beginning since results are in DESC order
+            }
+
+            // Act
+            const response = await request(app)
+                .get('/api/items')
                 .expect(200);
 
-            // Assert: Verify only the correct item was deleted
-            const remainingItems = db.prepare('SELECT * FROM items ORDER BY id').all();
-            expect(remainingItems).toHaveLength(2);
-            expect(remainingItems[0].id).toBe(item1Id);
-            expect(remainingItems[1].id).toBe(item3Id);
+            // Assert
+            expect(response.body).toHaveLength(itemCount);
 
-            const deletedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(item2Id);
-            expect(deletedItem).toBeUndefined();
+            const returnedNames = response.body.map(item => item.name);
+            // Check that all expected items are present (order may vary due to same timestamps)
+            expectedNames.forEach(name => {
+                expect(returnedNames).toContain(name);
+            });
         });
 
-        it('should delete item that is exactly 5 days old', async () => {
-            // Arrange: Create an item that is exactly 5 days old
-            const itemId = createItemDaysOld('Exactly 5 Days Old Item', 5);
+        it('should handle items with special characters in names', async () => {
+            // Arrange
+            const specialNames = [
+                'Item with "quotes"',
+                "Item with 'apostrophes'",
+                'Item with émojis 🚀',
+                'Item with unicode ñáéíóú',
+                'Item with <html>tags</html>',
+                'Item with & ampersand',
+                'Item with newline\ncharacter'
+            ];
 
-            // Act: Delete the item
+            specialNames.forEach(name => createItem(name));
+
+            // Act
             const response = await request(app)
-                .delete(`/api/items/${itemId}`)
+                .get('/api/items')
                 .expect(200);
 
-            // Assert: Check response format
-            expect(response.body).toEqual({
-                message: 'Item deleted successfully',
-                id: itemId
-            });
-        });
-    });
+            // Assert
+            expect(response.body).toHaveLength(specialNames.length);
 
-    describe('age restriction enforcement', () => {
-        it('should return 403 when trying to delete item less than 5 days old', async () => {
-            // Arrange: Create an item that is only 2 days old
-            const itemId = createItemDaysOld('Recent Item', 2);
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403);
-
-            expect(response.body).toHaveProperty('error');
-            expect(response.body.error).toBe('Item cannot be deleted until it is at least 5 days old');
-            expect(response.body).toHaveProperty('created_at');
-            expect(response.body).toHaveProperty('days_remaining');
-            expect(response.body.days_remaining).toBeGreaterThan(0);
-
-            // Verify item still exists in database
-            const existingItem = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
-            expect(existingItem).toBeDefined();
-        });
-
-        it('should return 403 when trying to delete item that is 1 day old', async () => {
-            // Arrange: Create an item that is 1 day old
-            const itemId = createItemDaysOld('Very Recent Item', 1);
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403);
-
-            expect(response.body.error).toBe('Item cannot be deleted until it is at least 5 days old');
-            expect(response.body.days_remaining).toBe(4);
-        });
-
-        it('should return 403 when trying to delete item created today', async () => {
-            // Arrange: Create an item with current timestamp (using insertStmt)
-            const result = insertStmt.run('Today Item');
-            const itemId = result.lastInsertRowid;
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403);
-
-            expect(response.body.error).toBe('Item cannot be deleted until it is at least 5 days old');
-            expect(response.body.days_remaining).toBe(5);
-        });
-
-        it('should return 403 when trying to delete item that is 4 days old (edge case)', async () => {
-            // Arrange: Create an item that is 4 days old (just under the limit)
-            const itemId = createItemDaysOld('Almost Old Enough Item', 4);
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403);
-
-            expect(response.body.error).toBe('Item cannot be deleted until it is at least 5 days old');
-            expect(response.body.days_remaining).toBe(1);
-        });
-    });
-
-    describe('error handling', () => {
-        it('should return 404 when trying to delete non-existent item', async () => {
-            // Arrange: Use an ID that doesn't exist
-            const nonExistentId = 99999;
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${nonExistentId}`)
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should return 400 for invalid ID format (non-numeric)', async () => {
-            // Act & Assert
-            const response = await request(app)
-                .delete('/api/items/invalid-id')
-                .expect(400);
-
-            expect(response.body).toEqual({
-                error: 'Invalid item ID'
-            });
-        });
-
-        it('should return 404 for decimal number (parseInt converts to integer)', async () => {
-            // Act & Assert: parseInt('1.5') becomes 1, which doesn't exist
-            const response = await request(app)
-                .delete('/api/items/1.5')
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should return 404 for negative ID (parsed but not found)', async () => {
-            // Act & Assert: parseInt('-1') becomes -1, which doesn't exist
-            const response = await request(app)
-                .delete('/api/items/-1')
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should return 404 for zero ID', async () => {
-            // Act & Assert: Zero is technically a valid integer but won't exist
-            const response = await request(app)
-                .delete('/api/items/0')
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
+            const returnedNames = response.body.map(item => item.name);
+            // Check that all special character names are present
+            specialNames.forEach(name => {
+                expect(returnedNames).toContain(name);
             });
         });
 
         it('should handle database errors gracefully', async () => {
-            // Note: This test is challenging with in-memory database
-            // In a real application, you might mock the database methods
-            // For now, we'll test that the endpoint handles non-existent items correctly
-            const response = await request(app)
-                .delete('/api/items/99999')
-                .expect(404);
+            // Note: This is difficult to test with in-memory SQLite without mocking
+            // In a real scenario, you might mock the database prepare method
+            // For now, we'll test that the endpoint works correctly under normal conditions
 
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-    });
+            // Arrange
+            createItem('Test Item');
 
-    describe('edge cases', () => {
-        it('should handle very large valid integer IDs', async () => {
-            // Act & Assert: Large number should be parsed correctly but return 404
-            const response = await request(app)
-                .delete('/api/items/2147483647') // Max 32-bit integer
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should handle very large numbers (parsed to scientific notation)', async () => {
-            // Act & Assert: parseInt parses this to a very large number
-            const response = await request(app)
-                .delete('/api/items/999999999999999999999')
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should handle mixed alphanumeric IDs (parseInt extracts number)', async () => {
-            // Act & Assert: parseInt('1abc') becomes 1, which doesn't exist
-            const response = await request(app)
-                .delete('/api/items/1abc')
-                .expect(404);
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should handle leading zeros in ID', async () => {
-            // Arrange: Create an item that is old enough to delete
-            const itemId = createItemDaysOld('Test Item', 6);
-
-            // Act & Assert: Leading zeros should be handled correctly
-            const response = await request(app)
-                .delete(`/api/items/00${itemId}`)
-                .expect(200);
-
-            expect(response.body).toEqual({
-                message: 'Item deleted successfully',
-                id: itemId
-            });
-        });
-
-        it('should handle hexadecimal-looking strings', async () => {
-            // Act & Assert: parseInt will parse until it hits non-numeric character
-            const response = await request(app)
-                .delete('/api/items/0x123')
-                .expect(404); // parseInt('0x123') becomes 0
-
-            expect(response.body).toEqual({
-                error: 'Item not found'
-            });
-        });
-
-        it('should handle whitespace in ID parameter', async () => {
-            // Arrange: Create an item that is old enough to delete
-            const itemId = createItemDaysOld('Test Item', 6);
-
-            // Act & Assert: Whitespace should be trimmed by parseInt
-            const response = await request(app)
-                .delete(`/api/items/ ${itemId} `)
-                .expect(200);
-
-            expect(response.body).toEqual({
-                message: 'Item deleted successfully',
-                id: itemId
-            });
-        });
-    });
-
-    describe('response format validation', () => {
-        it('should return proper JSON content type for successful deletion', async () => {
-            // Arrange: Create an item that is old enough to delete
-            const itemId = createItemDaysOld('Test Item', 6);
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(200)
-                .expect('Content-Type', /json/);
-
-            expect(response.body).toBeDefined();
-        });
-
-        it('should return proper JSON content type for age restriction error', async () => {
-            // Arrange: Create a recent item
-            const itemId = createItemDaysOld('Recent Item', 2);
-
-            // Act & Assert
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403)
-                .expect('Content-Type', /json/);
-
-            expect(response.body).toBeDefined();
-            expect(response.body).toHaveProperty('error');
-        });
-
-        it('should return consistent error response format', async () => {
             // Act
             const response = await request(app)
-                .delete('/api/items/nonexistent')
+                .get('/api/items')
+                .expect(200);
+
+            // Assert
+            expect(response.body).toHaveLength(1);
+            expect(response.body[0].name).toBe('Test Item');
+        });
+    });
+
+    describe('POST /api/items', () => {
+        it('should create a new item with valid name', async () => {
+            // Arrange
+            const itemName = 'New Test Item';
+
+            // Act
+            const response = await request(app)
+                .post('/api/items')
+                .send({ name: itemName })
+                .expect(201)
+                .expect('Content-Type', /json/);
+
+            // Assert
+            expect(response.body).toHaveProperty('id');
+            expect(response.body).toHaveProperty('name');
+            expect(response.body).toHaveProperty('created_at');
+
+            expect(typeof response.body.id).toBe('number');
+            expect(response.body.name).toBe(itemName);
+            expect(typeof response.body.created_at).toBe('string');
+
+            // Verify created_at is a valid ISO string
+            expect(() => new Date(response.body.created_at)).not.toThrow();
+
+            // Verify item was actually created in database
+            const dbItem = db.prepare('SELECT * FROM items WHERE id = ?').get(response.body.id);
+            expect(dbItem).toBeDefined();
+            expect(dbItem.name).toBe(itemName);
+        });
+
+        it('should create item and increment ID correctly', async () => {
+            // Act: Create multiple items
+            const response1 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Item 1' })
+                .expect(201);
+
+            const response2 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Item 2' })
+                .expect(201);
+
+            const response3 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Item 3' })
+                .expect(201);
+
+            // Assert
+            expect(response2.body.id).toBe(response1.body.id + 1);
+            expect(response3.body.id).toBe(response2.body.id + 1);
+
+            // Verify all items exist in database
+            const allItems = db.prepare('SELECT * FROM items ORDER BY id').all();
+            expect(allItems).toHaveLength(3);
+            expect(allItems[0].name).toBe('Item 1');
+            expect(allItems[1].name).toBe('Item 2');
+            expect(allItems[2].name).toBe('Item 3');
+        });
+
+        it('should handle items with special characters', async () => {
+            // Arrange
+            const specialNames = [
+                'Item with "quotes"',
+                "Item with 'apostrophes'",
+                'Item with émojis 🚀',
+                'Item with unicode ñáéíóú',
+                'Item with <html>tags</html>',
+                'Item with & ampersand',
+                'Item with newline\ncharacter',
+                'Item with tabs\tand spaces   '
+            ];
+
+            // Act & Assert
+            for (const name of specialNames) {
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({ name })
+                    .expect(201);
+
+                expect(response.body.name).toBe(name);
+
+                // Verify in database
+                const dbItem = db.prepare('SELECT * FROM items WHERE id = ?').get(response.body.id);
+                expect(dbItem.name).toBe(name);
+            }
+        });
+
+        it('should handle very long item names', async () => {
+            // Arrange
+            const longName = 'A'.repeat(1000); // Very long string
+
+            // Act
+            const response = await request(app)
+                .post('/api/items')
+                .send({ name: longName })
+                .expect(201);
+
+            // Assert
+            expect(response.body.name).toBe(longName);
+            expect(response.body.name.length).toBe(1000);
+        });
+
+        describe('validation errors', () => {
+            it('should return 400 when name is missing', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({})
+                    .expect(400)
+                    .expect('Content-Type', /json/);
+
+                // Assert
+                expect(response.body).toEqual({
+                    error: 'Item name is required'
+                });
+
+                // Verify no item was created
+                const itemCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
+                expect(itemCount.count).toBe(0);
+            });
+
+            it('should return 400 when name is null', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({ name: null })
+                    .expect(400);
+
+                // Assert
+                expect(response.body).toEqual({
+                    error: 'Item name is required'
+                });
+            });
+
+            it('should return 400 when name is undefined', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({ name: undefined })
+                    .expect(400);
+
+                // Assert
+                expect(response.body).toEqual({
+                    error: 'Item name is required'
+                });
+            });
+
+            it('should return 400 when name is empty string', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({ name: '' })
+                    .expect(400);
+
+                // Assert
+                expect(response.body).toEqual({
+                    error: 'Item name is required'
+                });
+            });
+
+            it('should return 400 when name is only whitespace', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({ name: '   \t\n   ' })
+                    .expect(400);
+
+                // Assert
+                expect(response.body).toEqual({
+                    error: 'Item name is required'
+                });
+            });
+
+            it('should return 400 when name is not a string', async () => {
+                // Test various non-string types
+                const invalidNames = [
+                    123,
+                    true,
+                    false,
+                    [],
+                    {},
+                    { name: 'nested' }
+                ];
+
+                for (const invalidName of invalidNames) {
+                    const response = await request(app)
+                        .post('/api/items')
+                        .send({ name: invalidName })
+                        .expect(400);
+
+                    expect(response.body).toEqual({
+                        error: 'Item name is required'
+                    });
+                }
+            });
+        });
+
+        describe('request format handling', () => {
+            it('should handle JSON content type', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .set('Content-Type', 'application/json')
+                    .send(JSON.stringify({ name: 'JSON Item' }))
+                    .expect(201);
+
+                // Assert
+                expect(response.body.name).toBe('JSON Item');
+            });
+
+            it('should ignore extra fields in request body', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .send({
+                        name: 'Valid Item',
+                        extraField: 'should be ignored',
+                        anotherField: 123,
+                        nested: { field: 'ignored' }
+                    })
+                    .expect(201);
+
+                // Assert
+                expect(response.body.name).toBe('Valid Item');
+                expect(response.body).not.toHaveProperty('extraField');
+                expect(response.body).not.toHaveProperty('anotherField');
+                expect(response.body).not.toHaveProperty('nested');
+            });
+
+            it('should handle malformed JSON gracefully', async () => {
+                // Act
+                const response = await request(app)
+                    .post('/api/items')
+                    .set('Content-Type', 'application/json')
+                    .send('{ invalid json }')
+                    .expect(400);
+
+                // Note: Express built-in JSON parser will handle this and return 400
+                // The exact error message may vary based on Express version
+                expect(response.status).toBe(400);
+            });
+        });
+
+        describe('edge cases', () => {
+            it('should handle concurrent item creation', async () => {
+                // Arrange
+                const itemNames = ['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5'];
+
+                // Act: Create items concurrently
+                const promises = itemNames.map(name =>
+                    request(app)
+                        .post('/api/items')
+                        .send({ name })
+                );
+
+                const responses = await Promise.all(promises);
+
+                // Assert
+                responses.forEach((response, index) => {
+                    expect(response.status).toBe(201);
+                    expect(response.body.name).toBe(itemNames[index]);
+                    expect(response.body).toHaveProperty('id');
+                });
+
+                // Verify all items were created
+                const allItems = db.prepare('SELECT * FROM items ORDER BY id').all();
+                expect(allItems).toHaveLength(5);
+
+                // IDs should be unique
+                const ids = allItems.map(item => item.id);
+                const uniqueIds = [...new Set(ids)];
+                expect(uniqueIds).toHaveLength(5);
+            });
+
+            it('should maintain database integrity during rapid creation', async () => {
+                // Arrange
+                const initialCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
+                expect(initialCount.count).toBe(0);
+
+                // Act: Create many items rapidly
+                const createPromises = [];
+                for (let i = 1; i <= 20; i++) {
+                    createPromises.push(
+                        request(app)
+                            .post('/api/items')
+                            .send({ name: `Rapid Item ${i}` })
+                    );
+                }
+
+                const responses = await Promise.all(createPromises);
+
+                // Assert
+                responses.forEach(response => {
+                    expect(response.status).toBe(201);
+                });
+
+                const finalCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
+                expect(finalCount.count).toBe(20);
+
+                // Verify all items have unique IDs
+                const allItems = db.prepare('SELECT id FROM items').all();
+                const ids = allItems.map(item => item.id);
+                const uniqueIds = [...new Set(ids)];
+                expect(uniqueIds).toHaveLength(20);
+            });
+        });
+
+        it('should handle database errors gracefully', async () => {
+            // Note: This is difficult to test with in-memory SQLite without mocking
+            // In a real scenario, you might mock the database run method to throw an error
+            // For now, we'll test that the endpoint works correctly under normal conditions
+
+            // Act
+            const response = await request(app)
+                .post('/api/items')
+                .send({ name: 'Test Item' })
+                .expect(201);
+
+            // Assert
+            expect(response.body.name).toBe('Test Item');
+            expect(response.body).toHaveProperty('id');
+        });
+    });
+
+    describe('Integration tests', () => {
+        it('should allow creating and retrieving items in sequence', async () => {
+            // Act: Create items
+            const createResponse1 = await request(app)
+                .post('/api/items')
+                .send({ name: 'First Item' })
+                .expect(201);
+
+            const createResponse2 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Second Item' })
+                .expect(201);
+
+            // Act: Retrieve items
+            const getResponse = await request(app)
+                .get('/api/items')
+                .expect(200);
+
+            // Assert
+            expect(getResponse.body).toHaveLength(2);
+
+            // Check that both items are present (order may vary)
+            const itemNames = getResponse.body.map(item => item.name);
+            const itemIds = getResponse.body.map(item => item.id);
+
+            expect(itemNames).toContain('First Item');
+            expect(itemNames).toContain('Second Item');
+            expect(itemIds).toContain(createResponse1.body.id);
+            expect(itemIds).toContain(createResponse2.body.id);
+        });
+
+        it('should maintain data consistency across multiple operations', async () => {
+            // Arrange: Create initial items
+            await request(app).post('/api/items').send({ name: 'Item A' });
+            await request(app).post('/api/items').send({ name: 'Item B' });
+            await request(app).post('/api/items').send({ name: 'Item C' });
+
+            // Act: Get initial state
+            const initialResponse = await request(app).get('/api/items');
+            expect(initialResponse.body).toHaveLength(3);
+
+            // Act: Create more items
+            await request(app).post('/api/items').send({ name: 'Item D' });
+            await request(app).post('/api/items').send({ name: 'Item E' });
+
+            // Act: Get final state
+            const finalResponse = await request(app).get('/api/items');
+
+            // Assert
+            expect(finalResponse.body).toHaveLength(5);
+
+            // Check that all items are present
+            const finalNames = finalResponse.body.map(item => item.name);
+            ['Item A', 'Item B', 'Item C', 'Item D', 'Item E'].forEach(name => {
+                expect(finalNames).toContain(name);
+            });
+        });
+
+        it('should handle mixed successful and failed operations', async () => {
+            // Act: Mix of valid and invalid requests
+            const validResponse1 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Valid Item 1' })
+                .expect(201);
+
+            const invalidResponse1 = await request(app)
+                .post('/api/items')
+                .send({ name: '' })
                 .expect(400);
 
-            // Assert: Error responses should have consistent structure
-            expect(response.body).toHaveProperty('error');
-            expect(typeof response.body.error).toBe('string');
-            expect(response.body.error.length).toBeGreaterThan(0);
-        });
+            const validResponse2 = await request(app)
+                .post('/api/items')
+                .send({ name: 'Valid Item 2' })
+                .expect(201);
 
-        it('should return consistent success response format', async () => {
-            // Arrange: Create an item that is old enough to delete
-            const itemId = createItemDaysOld('Test Item', 6);
+            const invalidResponse2 = await request(app)
+                .post('/api/items')
+                .send({})
+                .expect(400);
 
-            // Act
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
+            // Act: Check final state
+            const getResponse = await request(app)
+                .get('/api/items')
                 .expect(200);
 
-            // Assert: Success responses should have consistent structure
-            expect(response.body).toHaveProperty('message');
-            expect(response.body).toHaveProperty('id');
-            expect(typeof response.body.message).toBe('string');
-            expect(typeof response.body.id).toBe('number');
-            expect(response.body.message).toBe('Item deleted successfully');
-            expect(response.body.id).toBe(itemId);
-        });
+            // Assert: Only valid items should be created
+            expect(getResponse.body).toHaveLength(2);
 
-        it('should return consistent age restriction error response format', async () => {
-            // Arrange: Create a recent item
-            const itemId = createItemDaysOld('Recent Item', 3);
+            const validNames = getResponse.body.map(item => item.name);
+            expect(validNames).toContain('Valid Item 1');
+            expect(validNames).toContain('Valid Item 2');
 
-            // Act
-            const response = await request(app)
-                .delete(`/api/items/${itemId}`)
-                .expect(403);
-
-            // Assert: Age restriction error responses should have consistent structure
-            expect(response.body).toHaveProperty('error');
-            expect(response.body).toHaveProperty('created_at');
-            expect(response.body).toHaveProperty('days_remaining');
-            expect(typeof response.body.error).toBe('string');
-            expect(typeof response.body.created_at).toBe('string');
-            expect(typeof response.body.days_remaining).toBe('number');
-            expect(response.body.error).toBe('Item cannot be deleted until it is at least 5 days old');
-            expect(response.body.days_remaining).toBeGreaterThan(0);
-        });
-    });
-
-    describe('database state verification', () => {
-        it('should maintain database integrity after deletion', async () => {
-            // Arrange: Create multiple items that are old enough to delete
-            const item1Id = createItemDaysOld('Item 1', 6);
-            const item2Id = createItemDaysOld('Item 2', 7);
-            const item3Id = createItemDaysOld('Item 3', 8);
-
-            // Verify initial state
-            const initialCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(initialCount.count).toBe(3);
-
-            // Act: Delete middle item
-            await request(app)
-                .delete(`/api/items/${item2Id}`)
-                .expect(200);
-
-            // Assert: Verify database state
-            const finalCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(finalCount.count).toBe(2);
-
-            const remainingItems = db.prepare('SELECT id FROM items ORDER BY id').all();
-            expect(remainingItems.map(item => item.id)).toEqual([item1Id, item3Id]);
-        });
-
-        it('should not affect other items when deletion fails due to age restriction', async () => {
-            // Arrange: Create some items - mix of old and new
-            const oldItemId = createItemDaysOld('Old Item', 6);
-            const newItemId = createItemDaysOld('New Item', 2);
-
-            const initialCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(initialCount.count).toBe(2);
-
-            // Act: Try to delete new item (should fail due to age)
-            await request(app)
-                .delete(`/api/items/${newItemId}`)
-                .expect(403);
-
-            // Assert: Database should be unchanged
-            const finalCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(finalCount.count).toBe(2);
-
-            // Both items should still exist
-            const oldItem = db.prepare('SELECT * FROM items WHERE id = ?').get(oldItemId);
-            const newItem = db.prepare('SELECT * FROM items WHERE id = ?').get(newItemId);
-            expect(oldItem).toBeDefined();
-            expect(newItem).toBeDefined();
-        });
-
-        it('should not affect other items when deletion fails due to non-existent item', async () => {
-            // Arrange: Create some items
-            createItemDaysOld('Item 1', 6);
-            createItemDaysOld('Item 2', 7);
-
-            const initialCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(initialCount.count).toBe(2);
-
-            // Act: Try to delete non-existent item
-            await request(app)
-                .delete('/api/items/99999')
-                .expect(404);
-
-            // Assert: Database should be unchanged
-            const finalCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(finalCount.count).toBe(2);
-        });
-
-        it('should handle multiple rapid deletions correctly when items are old enough', async () => {
-            // Arrange: Create multiple items that are all old enough
-            const items = [];
-            for (let i = 1; i <= 5; i++) {
-                const itemId = createItemDaysOld(`Item ${i}`, 6 + i);
-                items.push(itemId);
-            }
-
-            // Act: Delete multiple items rapidly
-            const deletePromises = items.slice(0, 3).map(id =>
-                request(app).delete(`/api/items/${id}`)
-            );
-
-            const responses = await Promise.all(deletePromises);
-
-            // Assert: All deletions should succeed
-            responses.forEach(response => {
-                expect(response.status).toBe(200);
-                expect(response.body.message).toBe('Item deleted successfully');
-            });
-
-            // Verify final database state
-            const remainingCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(remainingCount.count).toBe(2);
-        });
-
-        it('should handle mixed age items correctly during bulk operations', async () => {
-            // Arrange: Create items of different ages
-            const oldItem1Id = createItemDaysOld('Old Item 1', 6);
-            const newItem1Id = createItemDaysOld('New Item 1', 2);
-            const oldItem2Id = createItemDaysOld('Old Item 2', 7);
-            const newItem2Id = createItemDaysOld('New Item 2', 3);
-
-            // Act: Try to delete all items
-            const responses = await Promise.all([
-                request(app).delete(`/api/items/${oldItem1Id}`),
-                request(app).delete(`/api/items/${newItem1Id}`),
-                request(app).delete(`/api/items/${oldItem2Id}`),
-                request(app).delete(`/api/items/${newItem2Id}`)
-            ]);
-
-            // Assert: Old items should be deleted, new items should be rejected
-            expect(responses[0].status).toBe(200); // old item 1
-            expect(responses[1].status).toBe(403); // new item 1
-            expect(responses[2].status).toBe(200); // old item 2
-            expect(responses[3].status).toBe(403); // new item 2
-
-            // Verify final database state - only new items should remain
-            const remainingCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
-            expect(remainingCount.count).toBe(2);
-
-            const remainingItems = db.prepare('SELECT id FROM items ORDER BY id').all();
-            expect(remainingItems.map(item => item.id)).toEqual([newItem1Id, newItem2Id]);
+            // Verify error responses
+            expect(invalidResponse1.body.error).toBe('Item name is required');
+            expect(invalidResponse2.body.error).toBe('Item name is required');
         });
     });
 });

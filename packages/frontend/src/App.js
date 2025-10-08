@@ -81,7 +81,17 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete item');
+        // Parse the error response to get detailed error information
+        const errorData = await response.json();
+        const errorMessage = errorData.error || 'Failed to delete item';
+
+        // Include additional details if available
+        let fullErrorMessage = errorMessage;
+        if (errorData.days_remaining) {
+          fullErrorMessage += ` (${errorData.days_remaining} days remaining)`;
+        }
+
+        throw new Error(fullErrorMessage);
       }
 
       // Remove the item from the local state

@@ -110,10 +110,11 @@ describe('App Component - Delete Functionality', () => {
       });
       expect(screen.getByText('Test Item 2')).toBeInTheDocument();
 
-      // Mock failed delete request
+      // Mock failed delete request with proper JSON response
       fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
+        json: async () => ({ error: 'Failed to delete item' }),
       });
 
       // Act - Click delete button
@@ -270,10 +271,11 @@ describe('App Component - Delete Functionality', () => {
         expect(screen.getByText('Test Item 1')).toBeInTheDocument();
       });
 
-      // Simulate a failed delete
+      // Simulate a failed delete with proper JSON response
       fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
+        json: async () => ({ error: 'Failed to delete item' }),
       });
 
       const deleteButton = screen.getByLabelText('Delete Test Item 1');
